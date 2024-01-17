@@ -9,19 +9,11 @@ pub enum Direction {
     LEFT,
 }
 
+/// A restricted direction is either UP or LEFT. Useful for NormalisedEdgePosition.
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 pub enum RestrictedDirection {
     UP,
     LEFT,
-}
-
-pub fn direction_to_restricted(direction: Direction) -> Option<RestrictedDirection> {
-    match direction {
-        Direction::UP => Some(RestrictedDirection::UP),
-        Direction::RIGHT => Some(RestrictedDirection::LEFT),
-        Direction::DOWN => None,
-        Direction::LEFT => None,
-    }
 }
 
 const UP: (i32, i32) = (0, 1);
@@ -108,8 +100,8 @@ type NormalisedEdgePosition = ((i32, i32), RestrictedDirection);
 pub fn normalise_edge_position(edge_position: EdgePosition) -> NormalisedEdgePosition {
     let (base_pos, direction) = edge_position;
     match direction {
-        Direction::UP => (base_pos, direction_to_restricted(direction).unwrap()),
-        Direction::LEFT => (base_pos, direction_to_restricted(direction).unwrap()),
+        Direction::UP => (base_pos, RestrictedDirection::UP),
+        Direction::LEFT => (base_pos, RestrictedDirection::LEFT),
         Direction::RIGHT => (base_pos.add(RIGHT), RestrictedDirection::LEFT),
         Direction::DOWN => (base_pos.add(DOWN), RestrictedDirection::UP),
     }
@@ -259,42 +251,31 @@ impl TileAssembly {
         return Result::Ok(());
     }
 
-    // pub fn assembly_from_Collatz_parity_vector(parity_vector: Vec<u8>) -> Self {
-    //     let mut tiles = HashMap::new();
-    //     let mut current_position = (0, 0);
-    //     for parity in parity_vector {
-    //         if parity == 0 {
-    //             tiles.insert(
-    //                 current_position,
-    //                 TileTypeOrSpecial::TileType(TileType {
-    //                     up: 0),
-    //                     right: None,
-    //                     down: None,
-    //                     left: None,
-    //                 }),
-    //             );
-    //             current_position = current_position.add(LEFT);
-    //         } else {
-    //             tiles.insert(
-    //                 current_position,
-    //                 TileTypeOrSpecial::TileType(TileType {
-    //                     up: None,
-    //                     right: 1),
-    //                     down: 0),
-    //                     left: None,
-    //                 }),
-    //             );
-    //             current_position = current_position.add(LEFT.add(DOWN));
-    //         }
-    //     }
-    //     let mut to_return: TileAssembly = TileAssembly {
-    //         tiles,
-    //         tileset: TileSet::get_collatz_tileset(),
-    //         current_frontier: vec![],
-    //     };
-    //     to_return.compute_initial_frontier();
-    //     to_return
-    // }
+    pub fn new(tileset: TileSet) -> Self {
+        TileAssembly {
+            tiles: HashMap::new(),
+            edges: HashMap::new(),
+            tileset: tileset,
+            current_frontier: HashSet::new(),
+        }
+    }
+
+    pub fn assembly_from_Collatz_parity_vector(parity_vector: Vec<u8>) -> Self {
+        let mut to_return: TileAssembly = TileAssembly::new(TileSet::get_collatz_tileset());
+        let mut current_position: TilePosition = (0, 0);
+        for parity in parity_vector {
+            if parity == 0 {
+                to_return.add_edge((current_position,Direction::LEFT), 0).unwrap();
+                current_position = current_position.add(LEFT);
+            } else {
+                to_return.add_edge((current_position,Direction::DOWN), 1).unwrap();
+                current_position = current_position.add(LEFT);
+                to_return.add_edge((current_position,Direction::LEFT), 0).unwrap();
+                current_position = current_position.add(LEFT);
+            }
+        }
+        to_return
+    }
 }
 
 pub fn add(left: usize, right: usize) -> usize {
@@ -315,8 +296,8 @@ mod tests {
     fn initial_frontier_from_collatz_parity_vector() {
         let ta = TileAssembly::assembly_from_Collatz_parity_vector(vec![0, 1, 0, 1, 1]);
 
-        for (position, tile) in ta.tiles.iter() {
-            println!("{:?} {:?}", position, tile);
+        for (edge_position, glue) in ta.edges.iter() {
+            println!("{:?} {:?}", edge_position, glue);
         }
 
         for position in ta.current_frontier {
