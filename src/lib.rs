@@ -64,11 +64,11 @@ pub struct TileSet {
 
 impl TileSet {
     /// Returns the tile types that match the given adjacent edges.
-    pub fn matching_tiles(&self, adjacent_edges: &AdjacentEdges) -> Vec<TileType> {
-        let mut to_return: Vec<TileType> = Vec::new();
-        for tile_type in self.tile_types.iter() {
-            if tile_type.is_matching(&adjacent_edges) {
-                to_return.push(*tile_type);
+    pub fn matching_tiles(&self, adjacent_edges: &AdjacentEdges) -> Vec<usize> {
+        let mut to_return: Vec<usize> = Vec::new();
+        for (i, tile_type) in self.tile_types.iter().enumerate() {
+            if tile_type.is_matching(adjacent_edges) {
+                to_return.push(i);
             }
         }
         to_return
@@ -195,14 +195,15 @@ impl TileAssembly {
     pub fn solve_frontier(&mut self) {
         let mut positions_to_remove: Vec<TilePosition> = Vec::new();
         for tile_position in self.current_frontier.clone().iter() {
-            let adjacent_edges = self.adjacent_edges(&tile_position);
+            let adjacent_edges = self.adjacent_edges(tile_position);
             let matching_tiles = self.tileset.matching_tiles(&adjacent_edges);
-            if matching_tiles.len() == 0 {
+            if matching_tiles.is_empty() {
                 self.tiles
                     .insert(*tile_position, TileTypeOrImpossible::NoTileTypeCanFit);
             } else if matching_tiles.len() == 1 {
-                let tile_type = matching_tiles[0];
-                self.add_tile(&tile_position, &tile_type).unwrap();
+                let tile_type_index = matching_tiles[0];
+                self.add_tile_from_tileset(tile_position, tile_type_index)
+                    .unwrap();
                 positions_to_remove.push(*tile_position);
             }
         }
@@ -239,7 +240,7 @@ impl TileAssembly {
         edge_position: &NormalisedEdgePosition,
         glue: Glue,
     ) -> Result<(), ()> {
-        return self.add_edge(&unormalise_edge_position(edge_position), glue);
+        self.add_edge(&unormalise_edge_position(edge_position), glue)
     }
     /// Adds an edge to the tile assembly.
     ///
@@ -248,13 +249,10 @@ impl TileAssembly {
     /// - OK(()) if the edge was added successfully
     pub fn add_edge(&mut self, edge_position: &EdgePosition, glue: Glue) -> Result<(), ()> {
         let edge_position = normalise_edge_position(edge_position);
-        match self.edges.get(&edge_position) {
-            Some(other_glue) => {
-                if *other_glue != glue {
-                    return Result::Err(());
-                }
+        if let Some(other_glue) = self.edges.get(&edge_position) {
+            if *other_glue != glue {
+                return Result::Err(());
             }
-            _ => {}
         }
 
         self.edges.insert(edge_position, glue);
@@ -270,7 +268,7 @@ impl TileAssembly {
                 _ => {}
             }
         }
-        return Result::Ok(());
+        Result::Ok(())
     }
 
     /// Returns true if the tile can be placed at the given position.
@@ -282,7 +280,7 @@ impl TileAssembly {
         tile_position: &TilePosition,
         tile_type: &TileType,
     ) -> bool {
-        if self.tiles.contains_key(&tile_position) {
+        if self.tiles.contains_key(tile_position) {
             return false;
         }
         let adjacent_edges = self.adjacent_edges(tile_position);
@@ -309,51 +307,39 @@ impl TileAssembly {
         true
     }
 
-    /// Add a tile from the tile set to the tile assembly.
-    pub fn add_tile_from_tileset(
-        &mut self,
-        tile_position: TilePosition,
-        tile_type_index: usize,
-    ) -> Result<(), ()> {
-        if tile_type_index >= self.tileset.tile_types.len() {
-            return Result::Err(());
-        }
-        let tile_type = self.tileset.tile_types[tile_type_index];
-        self.add_tile(&tile_position, &tile_type)
-    }
-
-    /// Add a tile to the tile  assembly.
+    /// Add a tile to the tile assembly, selected from the tile set.
     ///
     /// # Returns
     /// - Err(()) if the tile cannot be added (e.g. because it is already there or one of the edges that is already defined mismatches)
     /// - OK(()) if the tile was added successfully
-    pub fn add_tile(
+    pub fn add_tile_from_tileset(
         &mut self,
         tile_position: &TilePosition,
-        tile_type: &TileType,
+        tile_type_index: usize,
     ) -> Result<(), ()> {
-        if !self.is_tile_placeable_at_position(tile_position, tile_type) {
+        let tile_type = self.tileset.tile_types[tile_type_index];
+        if !self.is_tile_placeable_at_position(tile_position, &tile_type) {
             return Result::Err(());
         }
 
         let adjacent_edges = self.adjacent_edges(tile_position);
 
-        self.add_normalised_edge(&adjacent_edges.up.0, tile_type.up);
-        self.add_normalised_edge(&adjacent_edges.right.0, tile_type.right);
-        self.add_normalised_edge(&adjacent_edges.down.0, tile_type.down);
-        self.add_normalised_edge(&adjacent_edges.left.0, tile_type.left);
+        let _ = self.add_normalised_edge(&adjacent_edges.up.0, tile_type.up);
+        let _ = self.add_normalised_edge(&adjacent_edges.right.0, tile_type.right);
+        let _ = self.add_normalised_edge(&adjacent_edges.down.0, tile_type.down);
+        let _ = self.add_normalised_edge(&adjacent_edges.left.0, tile_type.left);
 
         self.tiles
-            .insert(*tile_position, TileTypeOrImpossible::TileType(*tile_type));
+            .insert(*tile_position, TileTypeOrImpossible::TileType(tile_type));
 
-        return Result::Ok(());
+        Result::Ok(())
     }
 
     pub fn new(tileset: TileSet) -> Self {
         TileAssembly {
             tiles: HashMap::new(),
             edges: HashMap::new(),
-            tileset: tileset,
+            tileset,
             current_frontier: HashSet::new(),
         }
     }
