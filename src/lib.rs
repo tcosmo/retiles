@@ -31,11 +31,48 @@ pub struct TileType {
     left: Glue,
 }
 
+impl TileType {
+    /// Returns true if the tile type matches the given adjacent edges.
+    pub fn is_matching(self, adjacent_edges: &AdjacentEdges) -> bool {
+        if let Some(glue) = adjacent_edges.up.1 {
+            if glue != self.up {
+                return false;
+            }
+        }
+        if let Some(glue) = adjacent_edges.right.1 {
+            if glue != self.right {
+                return false;
+            }
+        }
+        if let Some(glue) = adjacent_edges.down.1 {
+            if glue != self.down {
+                return false;
+            }
+        }
+        if let Some(glue) = adjacent_edges.left.1 {
+            if glue != self.left {
+                return false;
+            }
+        }
+        true
+    }
+}
+
 pub struct TileSet {
-    tiles: Vec<TileType>,
+    tile_types: Vec<TileType>,
 }
 
 impl TileSet {
+    /// Returns the tile types that match the given adjacent edges.
+    pub fn matching_tiles(&self, adjacent_edges: &AdjacentEdges) -> Vec<TileType> {
+        let mut to_return: Vec<TileType> = Vec::new();
+        for tile_type in self.tile_types.iter() {
+            if tile_type.is_matching(&adjacent_edges) {
+                to_return.push(*tile_type);
+            }
+        }
+        to_return
+    }
     /// Returns the Collatz tileset, cf. Tristan's thesis
     /// # Examples
     ///  
@@ -45,7 +82,7 @@ impl TileSet {
     /// ```
     pub fn get_collatz_tileset() -> Self {
         TileSet {
-            tiles: vec![
+            tile_types: vec![
                 TileType {
                     up: 0,
                     right: 0,
@@ -95,10 +132,18 @@ type EdgePosition = ((i32, i32), Direction);
 // Normalised edge position either has direction LEFT or UP.
 type NormalisedEdgePosition = ((i32, i32), RestrictedDirection);
 
+pub fn unormalise_edge_position(normalised_edge_position: &NormalisedEdgePosition) -> EdgePosition {
+    let (base_pos, restricted_direction) = *normalised_edge_position;
+    match restricted_direction {
+        RestrictedDirection::UP => (base_pos, Direction::UP),
+        RestrictedDirection::LEFT => (base_pos, Direction::LEFT),
+    }
+}
+
 /// The edge (0,0) -> (-1,0) can be defined either by ((0,0), LEFT) or ((-1,0), RIGHT).
 /// The normalised edge position is the one where the direction is always LEFT or UP.
-pub fn normalise_edge_position(edge_position: EdgePosition) -> NormalisedEdgePosition {
-    let (base_pos, direction) = edge_position;
+pub fn normalise_edge_position(edge_position: &EdgePosition) -> NormalisedEdgePosition {
+    let (base_pos, direction) = *edge_position;
     match direction {
         Direction::UP => (base_pos, RestrictedDirection::UP),
         Direction::LEFT => (base_pos, RestrictedDirection::LEFT),
@@ -107,30 +152,21 @@ pub fn normalise_edge_position(edge_position: EdgePosition) -> NormalisedEdgePos
     }
 }
 pub struct AdjacentEdges {
-    up: NormalisedEdgePosition,
-    right: NormalisedEdgePosition,
-    down: NormalisedEdgePosition,
-    left: NormalisedEdgePosition,
+    up: (NormalisedEdgePosition, Option<Glue>),
+    right: (NormalisedEdgePosition, Option<Glue>),
+    down: (NormalisedEdgePosition, Option<Glue>),
+    left: (NormalisedEdgePosition, Option<Glue>),
 }
 
 /// Returns the tile positions that are adjacent to the given edge position.
 pub fn adjacent_tile_positions(edge_position: NormalisedEdgePosition) -> [TilePosition; 2] {
     match edge_position {
-        (base_pos, RestrictedDirection::UP) => [base_pos.add(LEFT), base_pos.add(RIGHT)],
-        (base_pos, RestrictedDirection::LEFT) => [base_pos.add(UP), base_pos.add(DOWN)],
+        (base_pos, RestrictedDirection::UP) => [base_pos, base_pos.add(RIGHT)],
+        (base_pos, RestrictedDirection::LEFT) => [base_pos, base_pos.add(DOWN)],
     }
 }
 
-/// Returns the edge positions that are adjacent to the given tile position in order UP, RIGHT, DOWN, LEFT.
-pub fn adjacent_edge_positions(tile_position: TilePosition) -> AdjacentEdges {
-    AdjacentEdges {
-        up: (tile_position.add(UP), RestrictedDirection::LEFT),
-        right: (tile_position, RestrictedDirection::UP),
-        down: (tile_position, RestrictedDirection::LEFT),
-        left: (tile_position.add(LEFT), RestrictedDirection::UP),
-    }
-}
-
+#[derive(Debug)]
 pub enum TileTypeOrImpossible {
     TileType(TileType),
     NoTileTypeCanFit,
@@ -146,37 +182,95 @@ pub struct TileAssembly {
 }
 
 impl TileAssembly {
+    pub fn solve(&mut self) {
+        loop {
+            let old_frontier = self.current_frontier.clone();
+            self.solve_frontier();
+            if old_frontier == self.current_frontier {
+                break;
+            }
+        }
+    }
+
+    pub fn solve_frontier(&mut self) {
+        let mut positions_to_remove: Vec<TilePosition> = Vec::new();
+        for tile_position in self.current_frontier.clone().iter() {
+            let adjacent_edges = self.adjacent_edges(&tile_position);
+            let matching_tiles = self.tileset.matching_tiles(&adjacent_edges);
+            if matching_tiles.len() == 0 {
+                self.tiles
+                    .insert(*tile_position, TileTypeOrImpossible::NoTileTypeCanFit);
+            } else if matching_tiles.len() == 1 {
+                let tile_type = matching_tiles[0];
+                self.add_tile(&tile_position, &tile_type).unwrap();
+                positions_to_remove.push(*tile_position);
+            }
+        }
+        for position in positions_to_remove {
+            self.current_frontier.remove(&position);
+        }
+    }
+
+    /// Returns the edges that are adjacent to the given tile position in order UP, RIGHT, DOWN, LEFT.
+    pub fn adjacent_edges(&self, tile_position: &TilePosition) -> AdjacentEdges {
+        let up_edge_position = (tile_position.add(UP), RestrictedDirection::LEFT);
+        let right_edge_position = (*tile_position, RestrictedDirection::UP);
+        let down_edge_position = (*tile_position, RestrictedDirection::LEFT);
+        let left_edge_position = (tile_position.add(LEFT), RestrictedDirection::UP);
+        AdjacentEdges {
+            up: (up_edge_position, self.edges.get(&up_edge_position).copied()),
+            right: (
+                right_edge_position,
+                self.edges.get(&right_edge_position).copied(),
+            ),
+            down: (
+                down_edge_position,
+                self.edges.get(&down_edge_position).copied(),
+            ),
+            left: (
+                left_edge_position,
+                self.edges.get(&left_edge_position).copied(),
+            ),
+        }
+    }
+
+    pub fn add_normalised_edge(
+        &mut self,
+        edge_position: &NormalisedEdgePosition,
+        glue: Glue,
+    ) -> Result<(), ()> {
+        return self.add_edge(&unormalise_edge_position(edge_position), glue);
+    }
     /// Adds an edge to the tile assembly.
     ///
     /// # Returns
     /// - Err(()) if the edge cannot be added (e.g. because it is already there)
     /// - OK(()) if the edge was added successfully
-    pub fn add_edge(&mut self, edge_position: EdgePosition, glue: Glue) -> Result<(), ()> {
+    pub fn add_edge(&mut self, edge_position: &EdgePosition, glue: Glue) -> Result<(), ()> {
         let edge_position = normalise_edge_position(edge_position);
         match self.edges.get(&edge_position) {
-            Some(_) => {
-                return Result::Err(());
-            }
-            None => {
-                self.edges.insert(edge_position, glue);
-                for tile_position in adjacent_tile_positions(edge_position) {
-                    match self.tiles.get(&tile_position) {
-                        Some(TileTypeOrImpossible::TileType(_)) => {
-                            // If there was a tile nearby the edge would have been added already.
-                            assert!(false);
-                        }
-                        Some(TileTypeOrImpossible::NoTileTypeCanFit) => {
-                            // This case where a side of the edge cannot fit any tile should be rare in practice but we allow it.
-                            self.current_frontier.insert(tile_position);
-                        }
-                        None => {
-                            self.current_frontier.insert(tile_position);
-                        }
-                    }
+            Some(other_glue) => {
+                if *other_glue != glue {
+                    return Result::Err(());
                 }
-                return Result::Ok(());
+            }
+            _ => {}
+        }
+
+        self.edges.insert(edge_position, glue);
+        for tile_position in adjacent_tile_positions(edge_position) {
+            match self.tiles.get(&tile_position) {
+                Some(TileTypeOrImpossible::NoTileTypeCanFit) => {
+                    // This case where a side of the edge cannot fit any tile should be rare in practice but we allow it.
+                    self.current_frontier.insert(tile_position);
+                }
+                None => {
+                    self.current_frontier.insert(tile_position);
+                }
+                _ => {}
             }
         }
+        return Result::Ok(());
     }
 
     /// Returns true if the tile can be placed at the given position.
@@ -185,29 +279,29 @@ impl TileAssembly {
     ///
     pub fn is_tile_placeable_at_position(
         &self,
-        tile_position: TilePosition,
-        tile_type: TileType,
+        tile_position: &TilePosition,
+        tile_type: &TileType,
     ) -> bool {
         if self.tiles.contains_key(&tile_position) {
             return false;
         }
-        let adjacent_edges = adjacent_edge_positions(tile_position);
-        if let Some(&glue) = self.edges.get(&adjacent_edges.up) {
+        let adjacent_edges = self.adjacent_edges(tile_position);
+        if let Some(&glue) = self.edges.get(&adjacent_edges.up.0) {
             if glue != tile_type.up {
                 return false;
             }
         }
-        if let Some(&glue) = self.edges.get(&adjacent_edges.right) {
+        if let Some(&glue) = self.edges.get(&adjacent_edges.right.0) {
             if glue != tile_type.right {
                 return false;
             }
         }
-        if let Some(&glue) = self.edges.get(&adjacent_edges.down) {
+        if let Some(&glue) = self.edges.get(&adjacent_edges.down.0) {
             if glue != tile_type.down {
                 return false;
             }
         }
-        if let Some(&glue) = self.edges.get(&adjacent_edges.left) {
+        if let Some(&glue) = self.edges.get(&adjacent_edges.left.0) {
             if glue != tile_type.left {
                 return false;
             }
@@ -221,11 +315,11 @@ impl TileAssembly {
         tile_position: TilePosition,
         tile_type_index: usize,
     ) -> Result<(), ()> {
-        if tile_type_index >= self.tileset.tiles.len() {
+        if tile_type_index >= self.tileset.tile_types.len() {
             return Result::Err(());
         }
-        let tile_type = self.tileset.tiles[tile_type_index];
-        self.add_tile(tile_position, tile_type)
+        let tile_type = self.tileset.tile_types[tile_type_index];
+        self.add_tile(&tile_position, &tile_type)
     }
 
     /// Add a tile to the tile  assembly.
@@ -233,20 +327,24 @@ impl TileAssembly {
     /// # Returns
     /// - Err(()) if the tile cannot be added (e.g. because it is already there or one of the edges that is already defined mismatches)
     /// - OK(()) if the tile was added successfully
-    pub fn add_tile(&mut self, tile_position: TilePosition, tile_type: TileType) -> Result<(), ()> {
+    pub fn add_tile(
+        &mut self,
+        tile_position: &TilePosition,
+        tile_type: &TileType,
+    ) -> Result<(), ()> {
         if !self.is_tile_placeable_at_position(tile_position, tile_type) {
             return Result::Err(());
         }
 
-        let adjacent_edges = adjacent_edge_positions(tile_position);
+        let adjacent_edges = self.adjacent_edges(tile_position);
 
-        self.edges.insert(adjacent_edges.up, tile_type.up);
-        self.edges.insert(adjacent_edges.right, tile_type.right);
-        self.edges.insert(adjacent_edges.down, tile_type.down);
-        self.edges.insert(adjacent_edges.left, tile_type.left);
+        self.add_normalised_edge(&adjacent_edges.up.0, tile_type.up);
+        self.add_normalised_edge(&adjacent_edges.right.0, tile_type.right);
+        self.add_normalised_edge(&adjacent_edges.down.0, tile_type.down);
+        self.add_normalised_edge(&adjacent_edges.left.0, tile_type.left);
 
         self.tiles
-            .insert(tile_position, TileTypeOrImpossible::TileType(tile_type));
+            .insert(*tile_position, TileTypeOrImpossible::TileType(*tile_type));
 
         return Result::Ok(());
     }
@@ -265,12 +363,19 @@ impl TileAssembly {
         let mut current_position: TilePosition = (0, 0);
         for parity in parity_vector {
             if parity == 0 {
-                to_return.add_edge((current_position,Direction::LEFT), 0).unwrap();
+                let edge_to_add = (current_position, Direction::LEFT);
+                println!("Adding edge {:?}", edge_to_add);
+                to_return.add_edge(&edge_to_add, 0).unwrap();
                 current_position = current_position.add(LEFT);
             } else {
-                to_return.add_edge((current_position,Direction::DOWN), 1).unwrap();
-                current_position = current_position.add(LEFT);
-                to_return.add_edge((current_position,Direction::LEFT), 0).unwrap();
+                let edge_to_add = (current_position, Direction::DOWN);
+                println!("Adding edge {:?}", edge_to_add);
+                to_return.add_edge(&edge_to_add, 1).unwrap();
+                current_position = current_position.add(DOWN);
+
+                let edge_to_add = (current_position, Direction::LEFT);
+                println!("Adding edge {:?}", edge_to_add);
+                to_return.add_edge(&edge_to_add, 0).unwrap();
                 current_position = current_position.add(LEFT);
             }
         }
@@ -278,21 +383,26 @@ impl TileAssembly {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn initial_frontier_from_collatz_parity_vector() {
-        let ta = TileAssembly::assembly_from_Collatz_parity_vector(vec![0, 1, 0, 1, 1]);
+        let mut ta = TileAssembly::assembly_from_Collatz_parity_vector(vec![0, 1, 0, 1, 1]);
 
         for (edge_position, glue) in ta.edges.iter() {
             println!("{:?} {:?}", edge_position, glue);
         }
 
-        for position in ta.current_frontier {
+        for position in ta.current_frontier.iter() {
             println!("{:?}", position);
+        }
+
+        ta.solve();
+
+        for (tile_position, tile_type_or_impossible) in ta.tiles.iter() {
+            println!("{:?} {:?}", tile_position, tile_type_or_impossible);
         }
 
         assert_eq!(1, 1);
