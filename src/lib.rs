@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use vector2math::*;
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
@@ -58,6 +58,7 @@ impl TileType {
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct TileSet {
     tile_types: Vec<TileType>,
 }
@@ -158,6 +159,25 @@ pub struct AdjacentEdges {
     left: (NormalisedEdgePosition, Option<Glue>),
 }
 
+impl AdjacentEdges {
+    pub fn number_of_defined_edges(&self) -> u8 {
+        let mut to_return = 0;
+        if self.up.1.is_some() {
+            to_return += 1;
+        }
+        if self.right.1.is_some() {
+            to_return += 1;
+        }
+        if self.down.1.is_some() {
+            to_return += 1;
+        }
+        if self.left.1.is_some() {
+            to_return += 1;
+        }
+        to_return
+    }
+}
+
 /// Returns the tile positions that are adjacent to the given edge position.
 pub fn adjacent_tile_positions(edge_position: NormalisedEdgePosition) -> [TilePosition; 2] {
     match edge_position {
@@ -166,12 +186,13 @@ pub fn adjacent_tile_positions(edge_position: NormalisedEdgePosition) -> [TilePo
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum TileTypeOrImpossible {
     TileType(TileType),
     NoTileTypeCanFit,
 }
 
+#[derive(Debug, Clone)]
 /// A tile assembly is a set of tiles positioned on a grid.
 pub struct TileAssembly {
     tiles: HashMap<TilePosition, TileTypeOrImpossible>,
@@ -182,6 +203,68 @@ pub struct TileAssembly {
 }
 
 impl TileAssembly {
+    pub fn get_nondet_position(&self, threshold: u8) -> Vec<TilePosition> {
+        let mut to_return: Vec<TilePosition> = Vec::new();
+        for tile_position in self.current_frontier.iter() {
+            let adjacent_edges = self.adjacent_edges(tile_position);
+
+            if adjacent_edges.number_of_defined_edges() < threshold {
+                continue;
+            }
+
+            let matching_tiles = self.tileset.matching_tiles(&adjacent_edges);
+            if matching_tiles.len() > 1 {
+                to_return.push(*tile_position);
+            }
+        }
+        to_return
+    }
+    pub fn solve_non_det(&self, threshold: u8) -> Vec<TileAssembly> {
+        let mut to_visit: VecDeque<TileAssembly> = VecDeque::new();
+        to_visit.push_back(self.clone());
+        let mut terminal_assemblies: Vec<TileAssembly> = Vec::new();
+
+        while !to_visit.is_empty() {
+            let mut current_assembly = to_visit.pop_front().unwrap();
+
+            let old_frontier = current_assembly.current_frontier.clone();
+
+            println!("Solving frontier");
+
+            current_assembly.solve_frontier();
+
+            let non_det_positions = current_assembly.get_nondet_position(threshold);
+
+            if old_frontier == current_assembly.current_frontier && non_det_positions.is_empty() {
+                terminal_assemblies.push(current_assembly);
+                continue;
+            }
+
+            if non_det_positions.is_empty() {
+                to_visit.push_back(current_assembly);
+                continue;
+            }
+
+            let non_det_position = non_det_positions[0];
+            let adjacent_edges = current_assembly.adjacent_edges(&non_det_position);
+            let matching_tiles = current_assembly.tileset.matching_tiles(&adjacent_edges);
+            for tile_type_index in matching_tiles {
+                let mut new_assembly = current_assembly.clone();
+                println!(
+                    "Non det: Adding tile {:?} at position {:?}",
+                    tile_type_index, non_det_position
+                );
+                new_assembly
+                    .add_tile_from_tileset(&non_det_position, tile_type_index)
+                    .unwrap();
+                new_assembly.current_frontier.remove(&non_det_position);
+                to_visit.push_back(new_assembly);
+            }
+        }
+
+        terminal_assemblies
+    }
+
     pub fn solve(&mut self) {
         loop {
             let old_frontier = self.current_frontier.clone();
@@ -194,17 +277,22 @@ impl TileAssembly {
 
     pub fn solve_frontier(&mut self) {
         let mut positions_to_remove: Vec<TilePosition> = Vec::new();
-        for tile_position in self.current_frontier.clone().iter() {
-            let adjacent_edges = self.adjacent_edges(tile_position);
+        for tile_position in self.current_frontier.clone() {
+            let adjacent_edges = self.adjacent_edges(&tile_position);
             let matching_tiles = self.tileset.matching_tiles(&adjacent_edges);
             if matching_tiles.is_empty() {
+                println!("Adding impossible tile at position {:?}", tile_position);
                 self.tiles
-                    .insert(*tile_position, TileTypeOrImpossible::NoTileTypeCanFit);
+                    .insert(tile_position, TileTypeOrImpossible::NoTileTypeCanFit);
             } else if matching_tiles.len() == 1 {
                 let tile_type_index = matching_tiles[0];
-                self.add_tile_from_tileset(tile_position, tile_type_index)
+                println!(
+                    "Adding tile {:?} at position {:?}",
+                    tile_type_index, tile_position
+                );
+                self.add_tile_from_tileset(&tile_position, tile_type_index)
                     .unwrap();
-                positions_to_remove.push(*tile_position);
+                positions_to_remove.push(tile_position);
             }
         }
         for position in positions_to_remove {
@@ -281,6 +369,7 @@ impl TileAssembly {
         tile_type: &TileType,
     ) -> bool {
         if self.tiles.contains_key(tile_position) {
+            println!("Tile already there");
             return false;
         }
         let adjacent_edges = self.adjacent_edges(tile_position);
@@ -372,6 +461,38 @@ impl TileAssembly {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn solve_non_det() {
+        let mut ta = TileAssembly::new(TileSet::get_collatz_tileset());
+        let _ = ta.add_edge(&((0, 0), Direction::LEFT), 0);
+        let _ = ta.add_edge(&((-1, 0), Direction::DOWN), 0);
+
+        for (tile_position, tile) in ta.tiles.iter() {
+            println!("{:?} {:?}", tile_position, tile);
+        }
+
+        println!("{:?}", ta.solve_non_det(2).len());
+
+        let mut ta = TileAssembly::new(TileSet::get_collatz_tileset());
+        let _ = ta.add_edge(&((0, 0), Direction::RIGHT), 1);
+        let _ = ta.add_edge(&((0, 1), Direction::RIGHT), 0);
+        let _ = ta.add_edge(&((0, 2), Direction::RIGHT), 0);
+        let _ = ta.add_edge(&((0, 3), Direction::RIGHT), 1);
+        let _ = ta.add_edge(&((0, 4), Direction::RIGHT), 1);
+
+        let _ = ta.add_edge(&((0, 0), Direction::DOWN), 2);
+        let _ = ta.add_edge(&((0, -1), Direction::DOWN), 0);
+        let _ = ta.add_edge(&((0, -2), Direction::DOWN), 1);
+
+        for (tile_position, tile) in ta.tiles.iter() {
+            println!("{:?} {:?}", tile_position, tile);
+        }
+
+        println!("{:?}", ta.solve_non_det(2).len());
+
+        assert!(true);
+    }
 
     #[test]
     fn initial_frontier_from_collatz_parity_vector() {
