@@ -1,3 +1,5 @@
+use serde::{Deserialize, Serialize};
+use serde_with::serde_as;
 use std::collections::{HashMap, HashSet, VecDeque};
 use vector2math::*;
 
@@ -10,7 +12,7 @@ pub enum Direction {
 }
 
 /// A restricted direction is either UP or LEFT. Useful for NormalisedEdgePosition.
-#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
+#[derive(Serialize, Deserialize, Copy, Clone, Debug, Eq, PartialEq, Hash)]
 pub enum RestrictedDirection {
     UP,
     LEFT,
@@ -23,7 +25,7 @@ const LEFT: (i32, i32) = (-1, 0);
 
 type Glue = u8;
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Serialize, Deserialize, Copy, Clone, Debug)]
 pub struct TileType {
     up: Glue,
     right: Glue,
@@ -58,7 +60,7 @@ impl TileType {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct TileSet {
     tile_types: Vec<TileType>,
 }
@@ -186,16 +188,19 @@ pub fn adjacent_tile_positions(edge_position: NormalisedEdgePosition) -> [TilePo
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum TileTypeOrImpossible {
     TileType(TileType),
     NoTileTypeCanFit,
 }
 
-#[derive(Debug, Clone)]
+#[serde_as]
+#[derive(Serialize, Debug, Clone)]
 /// A tile assembly is a set of tiles positioned on a grid.
 pub struct TileAssembly {
+    #[serde_as(as = "Vec<(_, _)>")]
     tiles: HashMap<TilePosition, TileTypeOrImpossible>,
+    #[serde_as(as = "Vec<(_, _)>")]
     edges: HashMap<NormalisedEdgePosition, Glue>,
     tileset: TileSet,
     /// The frontier is the set of tile positions that have at least one edge defined.
@@ -229,7 +234,7 @@ impl TileAssembly {
 
             let old_frontier = current_assembly.current_frontier.clone();
 
-            println!("Solving frontier");
+            //println!("Solving frontier");
 
             current_assembly.solve_frontier();
 
@@ -250,10 +255,10 @@ impl TileAssembly {
             let matching_tiles = current_assembly.tileset.matching_tiles(&adjacent_edges);
             for tile_type_index in matching_tiles {
                 let mut new_assembly = current_assembly.clone();
-                println!(
-                    "Non det: Adding tile {:?} at position {:?}",
-                    tile_type_index, non_det_position
-                );
+                // println!(
+                //     "Non det: Adding tile {:?} at position {:?}",
+                //     tile_type_index, non_det_position
+                // );
                 new_assembly
                     .add_tile_from_tileset(&non_det_position, tile_type_index)
                     .unwrap();
@@ -281,15 +286,15 @@ impl TileAssembly {
             let adjacent_edges = self.adjacent_edges(&tile_position);
             let matching_tiles = self.tileset.matching_tiles(&adjacent_edges);
             if matching_tiles.is_empty() {
-                println!("Adding impossible tile at position {:?}", tile_position);
+                //println!("Adding impossible tile at position {:?}", tile_position);
                 self.tiles
                     .insert(tile_position, TileTypeOrImpossible::NoTileTypeCanFit);
             } else if matching_tiles.len() == 1 {
                 let tile_type_index = matching_tiles[0];
-                println!(
-                    "Adding tile {:?} at position {:?}",
-                    tile_type_index, tile_position
-                );
+                // println!(
+                //     "Adding tile {:?} at position {:?}",
+                //     tile_type_index, tile_position
+                // );
                 self.add_tile_from_tileset(&tile_position, tile_type_index)
                     .unwrap();
                 positions_to_remove.push(tile_position);
@@ -369,7 +374,7 @@ impl TileAssembly {
         tile_type: &TileType,
     ) -> bool {
         if self.tiles.contains_key(tile_position) {
-            println!("Tile already there");
+            //println!("Tile already there");
             return false;
         }
         let adjacent_edges = self.adjacent_edges(tile_position);
@@ -439,17 +444,17 @@ impl TileAssembly {
         for parity in parity_vector {
             if parity == 0 {
                 let edge_to_add = (current_position, Direction::LEFT);
-                println!("Adding edge {:?}", edge_to_add);
+                //println!("Adding edge {:?}", edge_to_add);
                 to_return.add_edge(&edge_to_add, 0).unwrap();
                 current_position = current_position.add(LEFT);
             } else {
                 let edge_to_add = (current_position, Direction::DOWN);
-                println!("Adding edge {:?}", edge_to_add);
+                //println!("Adding edge {:?}", edge_to_add);
                 to_return.add_edge(&edge_to_add, 1).unwrap();
                 current_position = current_position.add(DOWN);
 
                 let edge_to_add = (current_position, Direction::LEFT);
-                println!("Adding edge {:?}", edge_to_add);
+                //println!("Adding edge {:?}", edge_to_add);
                 to_return.add_edge(&edge_to_add, 0).unwrap();
                 current_position = current_position.add(LEFT);
             }
