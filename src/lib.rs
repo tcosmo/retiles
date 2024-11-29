@@ -23,7 +23,7 @@ const RIGHT: (i32, i32) = (1, 0);
 const DOWN: (i32, i32) = (0, -1);
 const LEFT: (i32, i32) = (-1, 0);
 
-type Glue = u8;
+pub type Glue = u8;
 
 #[derive(Serialize, Deserialize, Copy, Clone, Debug)]
 pub struct TileType {
@@ -127,13 +127,13 @@ impl TileSet {
     }
 }
 
-type TilePosition = (i32, i32);
+pub type TilePosition = (i32, i32);
 /// We denote edge by pairs such as ((0,0), LEFT)
 /// The relation between TilePosition and EdgePosition is that
 /// the right edge of the tile at TilePosition(0,0) is ((0,0), (0,-1)) = EdgePosition((0,0), LEFT).
-type EdgePosition = ((i32, i32), Direction);
+pub type EdgePosition = ((i32, i32), Direction);
 // Normalised edge position either has direction LEFT or UP.
-type NormalisedEdgePosition = ((i32, i32), RestrictedDirection);
+pub type NormalisedEdgePosition = ((i32, i32), RestrictedDirection);
 
 pub fn unormalise_edge_position(normalised_edge_position: &NormalisedEdgePosition) -> EdgePosition {
     let (base_pos, restricted_direction) = *normalised_edge_position;
@@ -199,15 +199,20 @@ pub enum TileTypeOrImpossible {
 /// A tile assembly is a set of tiles positioned on a grid.
 pub struct TileAssembly {
     #[serde_as(as = "Vec<(_, _)>")]
-    tiles: HashMap<TilePosition, TileTypeOrImpossible>,
+    pub tiles: HashMap<TilePosition, TileTypeOrImpossible>,
     #[serde_as(as = "Vec<(_, _)>")]
-    edges: HashMap<NormalisedEdgePosition, Glue>,
-    tileset: TileSet,
+    pub edges: HashMap<NormalisedEdgePosition, Glue>,
+    pub tileset: TileSet,
     /// The frontier is the set of tile positions that have at least one edge defined.
     current_frontier: HashSet<TilePosition>,
 }
 
 impl TileAssembly {
+    /// Returns all positions where more than 1 tile can fit.
+    ///
+    /// # Arguments
+    /// * `threshold` - The number of matching edges that a tile type must have to be considered to fit.
+    ///
     pub fn get_nondet_position(&self, threshold: u8) -> Vec<TilePosition> {
         let mut to_return: Vec<TilePosition> = Vec::new();
         for tile_position in self.current_frontier.iter() {
@@ -224,6 +229,8 @@ impl TileAssembly {
         }
         to_return
     }
+
+    /// Similar to solve but returns all terminal assemblies.
     pub fn solve_non_det(&self, threshold: u8) -> Vec<TileAssembly> {
         let mut to_visit: VecDeque<TileAssembly> = VecDeque::new();
         to_visit.push_back(self.clone());
@@ -270,6 +277,7 @@ impl TileAssembly {
         terminal_assemblies
     }
 
+    /// Solves the tile assembly deterministically, i.e. positions where more than 1 tile can fit are left empty.
     pub fn solve(&mut self) {
         loop {
             let old_frontier = self.current_frontier.clone();
@@ -280,6 +288,7 @@ impl TileAssembly {
         }
     }
 
+    /// Solves the frontier of the tile assembly.
     pub fn solve_frontier(&mut self) {
         let mut positions_to_remove: Vec<TilePosition> = Vec::new();
         for tile_position in self.current_frontier.clone() {
